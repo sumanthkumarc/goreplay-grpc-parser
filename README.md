@@ -1,6 +1,8 @@
 # goreplay-grpc-parser
 
-A generic gRPC traffic parser. Reads raw [goreplay](https://github.com/buger/gor) TCP captures from a Kafka topic, decodes the gRPC requests using local proto files, and publishes parsed JSON to a destination Kafka topic.
+A generic gRPC traffic parser. Reads raw [goreplay](https://github.com/buger/gor) TCP captures from a Kafka topic or file, decodes the gRPC requests using local proto files, and publishes parsed JSON to a destination Kafka topic or file.
+
+Written with help of Claude.
 
 ## Overview
 
@@ -8,13 +10,13 @@ A generic gRPC traffic parser. Reads raw [goreplay](https://github.com/buger/gor
 goreplay sidecar (captures TCP traffic)
          │
          ▼
-Source Kafka Topic  (raw binary, goreplay format)
+Source (Kafka topic or file)   ← raw binary, goreplay format
          │
          ▼
 goreplay-grpc-parser   (this tool)
          │
          ▼
-Destination Kafka Topic  (decoded JSON)
+Destination (Kafka topic or file)   ← decoded JSON
 ```
 
 ---
@@ -23,7 +25,7 @@ Destination Kafka Topic  (decoded JSON)
 
 ### Prerequisites
 
-- Go 1.21+
+- Go 1.25+ (or download a pre-built binary from [Releases](https://github.com/sumanthkumarc/goreplay-grpc-parser/releases))
 - Proto files for your gRPC service
 - Well-known proto files (`google/api/`, `google/protobuf/`, `validate/`) — auto-downloaded if not provided
 
@@ -44,11 +46,12 @@ Destination Kafka Topic  (decoded JSON)
 ```bash
 git clone https://github.com/sumanthkumarc/goreplay-grpc-parser
 cd goreplay-grpc-parser
-go build ./cmd/parser/
+go build -o parser .
 ```
 
 ### Run
 
+**Kafka → Kafka:**
 ```bash
 ./parser \
   --source-brokers="kafka-broker:9092" \
@@ -56,32 +59,70 @@ go build ./cmd/parser/
   --dest-brokers="kafka-broker:9092" \
   --dest-topic="my-service-grpc-parsed" \
   --proto-path="./proto" \
+  --consumer-group="my-parser-group" \
   --workers=8
+```
+
+**Kafka → stdout (quick test):**
+```bash
+./parser \
+  --source-brokers="kafka-broker:9092" \
+  --source-topic="my-service-grpc-raw" \
+  --dest-file=- \
+  --proto-path="./proto" \
+  --consumer-group="my-parser-group"
+```
+
+**File → file (no Kafka required):**
+```bash
+./parser \
+  --source-file="./dump.bin" \
+  --dest-file="./output.jsonl" \
+  --proto-path="./proto"
 ```
 
 If `--well-known-path` is not set or the path doesn't exist, well-known protos are automatically downloaded to `/tmp/well-known-protos/` at startup.
 
 ### CLI Flags
 
-| Flag | Default | Required | Description |
-|------|---------|----------|-------------|
-| `--source-brokers` | — | yes | CSV list of Kafka broker addresses for the input topic |
-| `--source-topic` | — | yes | Input Kafka topic containing raw goreplay binary data |
-| `--dest-brokers` | — | yes | CSV list of Kafka broker addresses for the output topic |
-| `--dest-topic` | — | yes | Output Kafka topic for parsed JSON messages |
-| `--proto-path` | — | yes | Path to `proto/` directory |
-| `--well-known-path` | auto-download | no | Path to well-known protos dir (`google/`, `validate/`); downloads to `/tmp/well-known-protos` if absent |
-| `--consumer-group` | `goreplay-grpc-parser` | no | Kafka consumer group ID |
-| `--workers` | `4` | no | Number of parallel message processing goroutines |
-| `--idle-timeout` | `10s` | no | Exit after this long with no new messages (0 = run forever) |
-| `--offset` | `-1` | no | Start from a specific partition offset, bypassing committed group offsets |
-| `--debug` | `false` | no | Read from beginning, no Kafka output, print frame-level diagnostic stats on exit |
+**Source (mutually exclusive):**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--source-brokers` | — | CSV list of Kafka broker addresses for the input topic |
+| `--source-topic` | — | Input Kafka topic containing raw goreplay binary data |
+| `--source-file` | — | Path to a goreplay dump file (alternative to Kafka source) |
+
+**Destination (mutually exclusive):**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--dest-brokers` | — | CSV list of Kafka broker addresses for the output topic |
+| `--dest-topic` | — | Output Kafka topic for parsed JSON messages |
+| `--dest-file` | — | Path to output file for JSON lines; use `-` for stdout (alternative to Kafka dest) |
+
+**Proto:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--proto-path` | — | **required** — Path to `proto/` directory |
+| `--well-known-path` | auto-download | Path to well-known protos dir (`google/`, `validate/`); downloads to `/tmp/well-known-protos` if absent |
+
+**Tuning:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--consumer-group` | — | **required when using Kafka source** — Kafka consumer group ID |
+| `--workers` | `4` | Number of parallel message processing goroutines |
+| `--idle-timeout` | `10s` | Exit after this long with no new messages (0 = run forever) |
+| `--offset` | `-1` | Start from a specific partition offset, bypassing committed group offsets |
+| `--debug` | `false` | Read from beginning, no output written, print frame-level diagnostic stats on exit |
 
 ---
 
 ## Output Format
 
-Each message published to the destination topic is a JSON object:
+Each message published to the destination is a JSON object:
 
 ```json
 {
@@ -109,21 +150,21 @@ Each message published to the destination topic is a JSON object:
 
 ## Debug Mode
 
-The `--debug` flag is useful for verifying your setup before writing to Kafka:
+The `--debug` flag is useful for verifying your setup without writing any output:
 
 ```bash
 ./parser \
   --source-brokers="kafka-broker:9092" \
   --source-topic="my-service-grpc-raw" \
-  --dest-brokers="kafka-broker:9092" \
-  --dest-topic="my-service-grpc-parsed" \
+  --dest-file=- \
   --proto-path="./proto" \
+  --consumer-group="my-parser-debug" \
   --debug
 ```
 
 In debug mode the parser:
 - Reads from the **beginning** of the topic (bypasses committed group offsets)
-- Does **not** write anything to the destination topic
+- Does **not** write anything to the destination
 - Prints a per-method breakdown and frame-level diagnostic stats on exit
 
 Example output:
@@ -140,7 +181,7 @@ Processed: 7770  Skipped: 0  Total: 7770
   DATA frames:                 7843
   DATA emitted:                7770
   DATA empty body:             73
-  DATA snappy OK:              7707
+  DATA decompressed OK:        7707
   DATA unknown compression:    0
 ```
 
@@ -182,7 +223,20 @@ Inside each DATA frame, gRPC wraps the protobuf bytes:
 compressed (1 byte) | message_length (4 bytes big-endian) | protobuf bytes
 ```
 
-If `compressed = 1`, the body is decompressed using the Snappy framing format before protobuf decoding. If a different encoding is encountered, the message is counted as `DATA unknown compression` in debug stats and skipped.
+If `compressed = 1`, the codec is auto-detected from the payload's magic bytes. Currently supported: Snappy framing format (`grpc-encoding: snappy`). If no registered codec matches, the message is counted as `DATA unknown compression` in debug stats and skipped.
+
+### Pluggable compression
+
+The `internal/compression` package defines a `Decompressor` interface. Each codec lives in its own file and declares its magic byte prefix for auto-detection:
+
+```go
+type Decompressor interface {
+    Magic() []byte
+    Decompress(src []byte) ([]byte, error)
+}
+```
+
+To add a new codec, implement this interface and register it with `compression.NewRegistry(...)`.
 
 ### Dynamic protobuf decoding
 
@@ -194,14 +248,37 @@ Proto files are parsed at runtime using [grpcurl](https://github.com/fullstoryde
 
 ```
 goreplay-grpc-parser/
-├── cmd/
-│   └── parser/
-│       └── main.go      # Parser service
+├── main.go                        # CLI wiring, worker pool, stats
+├── internal/
+│   ├── compression/
+│   │   ├── compression.go         # Decompressor interface + Registry
+│   │   └── snappy.go              # Snappy framing codec
+│   ├── decoder/
+│   │   └── decoder.go             # Dynamic protobuf decoding
+│   ├── input/
+│   │   ├── input.go               # Reader interface
+│   │   ├── kafka.go               # Kafka source
+│   │   └── file.go                # File source
+│   ├── output/
+│   │   ├── output.go              # Writer interface
+│   │   ├── kafka.go               # Kafka destination
+│   │   └── file.go                # File/stdout destination
+│   ├── tracker/
+│   │   └── tracker.go             # TCP reassembly + HTTP/2 frame parsing
+│   └── wellknown/
+│       └── wellknown.go           # Well-known proto auto-download
+├── .goreleaser.yaml
+├── .github/workflows/release.yml  # Release workflow
 ├── go.mod
 ├── go.sum
-├── LICENSE
-└── README.md
+└── LICENSE
 ```
+
+---
+
+## Releases
+
+Pre-built binaries for Linux (amd64) and macOS (amd64, arm64) are available on the [Releases](https://github.com/sumanthkumarc/goreplay-grpc-parser/releases) page, built automatically via GoReleaser on each version tag.
 
 ---
 
