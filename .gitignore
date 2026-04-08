@@ -1,6 +1,6 @@
 # Binaries
 /parser
-/cmd/parser/parser
+/dist/
 
 # Go build cache
 *.test

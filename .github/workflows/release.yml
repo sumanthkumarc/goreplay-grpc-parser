@@ -1,0 +1,89 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goreleaser_ids: linux-amd64
+          - os: macos-13        # Intel runner
+            goreleaser_ids: darwin-amd64
+          - os: macos-latest    # Apple Silicon runner (M1/M2)
+            goreleaser_ids: darwin-arm64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install librdkafka (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y librdkafka-dev
+
+      - name: Install librdkafka (macOS)
+        if: runner.os == 'macOS'
+        run: brew install librdkafka
+
+      - name: Build with GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: latest
+          args: build --clean --id ${{ matrix.goreleaser_ids }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.goreleaser_ids }}
+          path: dist/
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/
+          merge-multiple: true
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Publish release with GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --clean --skip=build
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
