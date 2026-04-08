@@ -1,0 +1,21 @@
+# Binaries
+parser
+/cmd/parser/parser
+
+# Go build cache
+*.test
+*.out
+
+# Dependency vendor directory (if used)
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# well-known protos auto-downloaded at runtime
+/tmp/well-known-protos/
