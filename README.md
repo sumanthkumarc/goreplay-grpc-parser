@@ -278,7 +278,7 @@ goreplay-grpc-parser/
 
 ## Releases
 
-Pre-built binaries for Linux (amd64) and macOS (amd64, arm64) are available on the [Releases](https://github.com/sumanthkumarc/goreplay-grpc-parser/releases) page, built automatically via GoReleaser on each version tag.
+Pre-built binaries for Linux (amd64) and macOS (arm64) are available on the [Releases](https://github.com/sumanthkumarc/goreplay-grpc-parser/releases) page, built automatically on each version tag.
 
 ---
 

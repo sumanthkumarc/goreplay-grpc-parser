@@ -10,24 +10,24 @@ permissions:
 
 jobs:
   build:
-    name: Build ${{ matrix.os }}
+    name: Build ${{ matrix.name }}
     strategy:
       matrix:
         include:
-          - os: ubuntu-latest
-            goreleaser_ids: linux-amd64
-          - os: macos-13        # Intel runner
-            goreleaser_ids: darwin-amd64
-          - os: macos-latest    # Apple Silicon runner (M1/M2)
-            goreleaser_ids: darwin-arm64
+          - name: linux-amd64
+            os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+          - name: darwin-arm64
+            os: macos-latest
+            goos: darwin
+            goarch: arm64
 
     runs-on: ${{ matrix.os }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -42,48 +42,40 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install librdkafka
 
-      - name: Build with GoReleaser
-        uses: goreleaser/goreleaser-action@v6
-        with:
-          distribution: goreleaser
-          version: latest
-          args: build --clean --id ${{ matrix.goreleaser_ids }}
+      - name: Build
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CGO_ENABLED: "1"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build -ldflags="-s -w" -o parser .
+
+      - name: Package
+        run: tar -czf parser_${{ matrix.name }}.tar.gz parser
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: binary-${{ matrix.goreleaser_ids }}
-          path: dist/
+          name: ${{ matrix.name }}
+          path: parser_${{ matrix.name }}.tar.gz
 
   release:
-    name: Publish release
+    name: Publish GitHub Release
     needs: build
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          path: dist/
           merge-multiple: true
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
+      - name: Create checksums
+        run: sha256sum parser_*.tar.gz > checksums.txt
 
-      - name: Publish release with GoReleaser
-        uses: goreleaser/goreleaser-action@v6
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          distribution: goreleaser
-          version: latest
-          args: release --clean --skip=build
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          files: |
+            parser_*.tar.gz
+            checksums.txt
+          generate_release_notes: true
