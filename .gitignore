@@ -1,5 +1,5 @@
 # Binaries
-parser
+/parser
 /cmd/parser/parser
 
 # Go build cache
